@@ -12,8 +12,9 @@ Forex V1 is a local research project, not a trading system. Its assumptions are:
 - No broker, live order execution, web interface, or neural network is part of this
   architecture step.
 
-Financial rules and market-data schemas will be specified in their dedicated later steps.
-This document defines module responsibilities and boundaries, not their algorithms.
+The market-data schema is specified in `docs/data_contract.md`. Other financial rules will
+be defined in their dedicated steps. This document defines module responsibilities and
+boundaries, not their algorithms.
 
 ## Modules
 

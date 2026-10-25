@@ -1,0 +1,30 @@
+project:
+  reference_currency: EUR
+  currencies:
+    - EUR
+    - USD
+    - GBP
+    - JPY
+    - CHF
+    - CAD
+    - AUD
+    - NZD
+  data_frequency: D1
+  rebalance_frequency: weekly
+
+portfolio:
+  long_only: true
+  leverage_enabled: false
+  initial_capital_eur: 10000
+
+split:
+  development_fraction: 0.75
+  test_fraction: 0.25
+
+data:
+  historical_sources:
+    - fred_h10
+  start_date: null
+  end_date: null
+  # null means no transaction-cost assumption has been configured.
+  transaction_cost_bps: null
