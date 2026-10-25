@@ -62,15 +62,25 @@ observation's market date remains unchanged regardless of its publication time.
 
 ## Local storage layout
 
-- `data/raw/<source>/<original_filename>`: original source files/bytes, retained as the
-  reconstruction source and never silently overwritten.
-- `data/processed/fx_observations/<source>/<BASE>_<QUOTE>.parquet`: standardized
-  observations for that source and ordered currency pair, reproducible from raw inputs and
-  configuration. Different source calendars remain separate.
+- `data/raw/fred/<SERIES_ID>/<SERIES_ID>_<retrieval-time>_<sha256>.json`: canonical complete
+  FRED response body, including missing-value markers.
+- The adjacent `.manifest.json` records the response SHA-256, series, safe request
+  parameters, UTC retrieval time, and available FRED metadata. It does not contain the API
+  key or authentication headers.
+- `data/processed/fred/<SERIES_ID>/<SERIES_ID>_<content-sha256>.parquet`: sorted,
+  standardized observations with schema version and raw-file reference.
+
+Raw response bodies and manifests are immutable. Reprocessing the same raw response
+produces the same content-addressed Parquet path; corrected source data creates a new
+processed version and does not replace the previous one.
 
 If a raw provider supplies a Parquet file, preserve that original file under `data/raw/`;
 do not replace it with the standardized dataset. Any regeneration of processed output must
-be an explicit operation rather than a silent overwrite.
+be an explicit operation rather than a silent overwrite. Use
+`forex_v1.data.storage.parquet_store.rebuild_from_raw(manifest_path, processed_root)` to
+verify a raw response and reconstruct its processed Parquet snapshot without network access.
+Use `read_raw_response` to verify the raw-body hash and `read_parquet` to load and validate a
+processed snapshot.
 
 `forex_v1.data.layout` exposes the default directory paths. This step defines no Parquet
 writer, ETL pipeline, cache, or overwrite mechanism; those behaviors must be implemented

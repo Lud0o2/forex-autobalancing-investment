@@ -72,6 +72,31 @@ Missing FRED values (`.` or empty strings) are skipped as absent observations. Z
 negative, non-finite, and non-numeric rates are rejected. No missing days are filled or
 interpolated. Different series may have different histories and calendars.
 
+## Local persistence and reconstruction
+
+When a caller explicitly passes a `FredRawResponse` to
+`forex_v1.data.storage.raw_store.write_raw_response`, the full JSON response is stored
+under `data/raw/fred/<SERIES_ID>/` with an adjacent manifest. The manifest records the
+SHA-256 hash of the canonical JSON body, UTC retrieval time, sanitized request parameters,
+and FRED metadata such as `count`, `offset`, `limit`, `realtime_start`, and `realtime_end`
+when supplied. Query credentials and authentication headers are never persisted.
+
+`forex_v1.data.storage.parquet_store.rebuild_from_raw` verifies the raw manifest/body,
+converts the stored response with the existing FRED parser, and writes a versioned file
+under `data/processed/fred/<SERIES_ID>/`. Processed rows include the `raw_file_id`, series
+identifier, schema version, pair, market date, rate, price type, and availability fields.
+The same raw snapshot produces the same processed path; a changed response has a different
+content-addressed version and does not overwrite prior files.
+
+For local verification/reconstruction:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q tests\test_storage.py
+```
+
+No data is fetched by this storage API. A later download workflow must explicitly call the
+connector, store the returned raw response, then invoke the rebuild function.
+
 ## Offline verification
 
 From the repository root, run the suite using the project environment:

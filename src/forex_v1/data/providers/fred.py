@@ -3,7 +3,8 @@
 import os
 import time
 from collections.abc import Mapping
-from datetime import date, datetime
+from dataclasses import dataclass
+from datetime import UTC, date, datetime
 from math import isfinite
 from types import MappingProxyType
 from typing import Any
@@ -54,6 +55,16 @@ class FredHTTPError(FredError):
 
 class FredResponseError(FredError):
     """Raised when a FRED response is malformed or contains invalid observations."""
+
+
+@dataclass(frozen=True, slots=True)
+class FredRawResponse:
+    """Complete FRED response plus retrieval metadata safe to persist."""
+
+    series_id: str
+    payload: Mapping[str, Any]
+    request_params: Mapping[str, str | int]
+    retrieved_at: datetime
 
 
 def _validate_date_range(start_date: date | None, end_date: date | None) -> None:
@@ -189,6 +200,26 @@ class FredClient:
         end_date: date | None = None,
     ) -> tuple[FXObservation, ...]:
         """Fetch and convert one known FRED series within the optional observation date range."""
+        raw_response = self.fetch_raw_series(
+            series_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        return parse_fred_observations(
+            series_id,
+            raw_response.payload,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+    def fetch_raw_series(
+        self,
+        series_id: str,
+        *,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> FredRawResponse:
+        """Fetch one complete response while keeping credentials out of returned metadata."""
         if series_id not in FRED_FX_SERIES:
             raise ValueError(f"Unsupported FRED FX series: {series_id!r}")
         _validate_date_range(start_date, end_date)
@@ -199,7 +230,7 @@ class FredClient:
                 "FRED_API_KEY is not set; configure it in the process environment"
             )
 
-        params: dict[str, str | int] = {
+        request_params: dict[str, str | int] = {
             "api_key": api_key,
             "file_type": "json",
             "limit": FRED_MAX_OBSERVATIONS,
@@ -207,17 +238,20 @@ class FredClient:
             "sort_order": "asc",
         }
         if start_date is not None:
-            params["observation_start"] = start_date.isoformat()
+            request_params["observation_start"] = start_date.isoformat()
         if end_date is not None:
-            params["observation_end"] = end_date.isoformat()
+            request_params["observation_end"] = end_date.isoformat()
 
-        payload = self._request_json(series_id, params)
+        payload = self._request_json(series_id, request_params)
         self._validate_result_count(payload)
-        return parse_fred_observations(
-            series_id,
-            payload,
-            start_date=start_date,
-            end_date=end_date,
+        if not isinstance(payload, Mapping) or not isinstance(payload.get("observations"), list):
+            raise FredResponseError("FRED response is missing an observations list")
+        safe_params = {key: value for key, value in request_params.items() if key != "api_key"}
+        return FredRawResponse(
+            series_id=series_id,
+            payload=payload,
+            request_params=safe_params,
+            retrieved_at=datetime.now(UTC),
         )
 
     def _request_json(self, series_id: str, params: Mapping[str, str | int]) -> Any:

@@ -207,6 +207,30 @@ def test_fetch_passes_requested_dates_timeout_and_api_key(monkeypatch):
     assert request["params"]["file_type"] == "json"
 
 
+def test_raw_fetch_exposes_complete_payload_without_api_key(monkeypatch):
+    monkeypatch.setenv("FRED_API_KEY", "test-key")
+    payload = {
+        "count": "2",
+        "offset": 0,
+        "limit": 100000,
+        "realtime_start": "2025-01-03",
+        "realtime_end": "2025-01-03",
+        "observations": [
+            {"date": "2025-01-02", "value": "1.08"},
+            {"date": "2025-01-03", "value": "."},
+        ],
+    }
+    session = FakeSession([FakeResponse(payload)])
+    client = FredClient(session=session, retry_backoff_seconds=0)
+
+    response = client.fetch_raw_series("DEXUSEU")
+
+    assert response.payload == payload
+    assert response.request_params["series_id"] == "DEXUSEU"
+    assert "api_key" not in response.request_params
+    assert response.retrieved_at.utcoffset().total_seconds() == 0
+
+
 @pytest.mark.parametrize(
     ("start_date", "end_date"),
     [

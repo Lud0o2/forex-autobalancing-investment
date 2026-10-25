@@ -3,9 +3,10 @@
 Projet local de recherche Forex, en Python 3.11 ou plus récent. Le périmètre prévu est
 long-only, sans levier et sans connexion à un broker. Aucun ordre réel n'est envoyé.
 
-Le projet fournit l'environnement Python, une architecture modulaire, un contrat de données
-et une configuration V1 validée au chargement. Les données de marché et les algorithmes
-seront ajoutés dans les étapes ultérieures après validation.
+Le projet fournit l'environnement Python, une architecture modulaire, un contrat de données,
+une configuration V1 validée au chargement, un connecteur FRED sans téléchargement
+automatique et des stockages locaux immuables pour les réponses brutes et observations
+standardisées. Aucun algorithme de trading n'est inclus.
 
 ## Prérequis
 
@@ -58,4 +59,4 @@ Sans activation :
 - `reports/` : rapports générés localement, ignorés par Git
 - `docs/` : documentation du projet
 
-Aucune donnée n'est téléchargée pendant cette étape.
+Aucune donnée n'est téléchargée automatiquement.
