@@ -1,0 +1,1 @@
+"""Local Forex research project."""

@@ -1,0 +1,30 @@
+# Python environments and generated files
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Test, lint, and coverage caches
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local secrets and environment configuration
+.env
+.env.*
+!.env.example
+
+# Local data and generated reports; retain directory markers
+/data/*
+!/data/raw/
+/data/raw/*
+!/data/raw/.gitkeep
+!/data/processed/
+/data/processed/*
+!/data/processed/.gitkeep
+/reports/*
+!/reports/.gitkeep
