@@ -1,0 +1,14 @@
+portfolio:
+  initial_capital_eur: 10000
+
+scenario:
+  strategy_name: fixed_weight_test
+  transaction_cost_bps: 10
+  availability_lag_days: 7
+  target_weights:
+    EUR: 0.25
+    USD: 0.25
+    GBP: 0.25
+    JPY: 0.25
+  start_date: null
+  end_date: null

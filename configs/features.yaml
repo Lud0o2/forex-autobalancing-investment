@@ -1,0 +1,27 @@
+version: 1
+annualization_observations: 252
+indicators:
+  log_return:
+    enabled: true
+    windows: [1, 5, 20, 60]
+  rsi:
+    enabled: true
+    windows: [14]
+  momentum:
+    enabled: true
+    windows: [5, 20, 60]
+  sma_relative:
+    enabled: true
+    windows: [20, 50, 200]
+  volatility:
+    enabled: true
+    windows: [20, 60]
+  bollinger_zscore:
+    enabled: true
+    windows: [20]
+  channel_position:
+    enabled: true
+    windows: [20]
+  drawdown:
+    enabled: true
+    windows: [60]
