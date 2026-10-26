@@ -29,8 +29,10 @@ boundaries, not their algorithms.
 | `evaluation` | Describe performance metrics and comparisons over completed results. | Dated simulation results. | Metric and comparison results. |
 | `experiments` | Configure and coordinate experiment runs and comparisons. | Experiment settings and data references. | Run metadata and links/records for resulting simulations and metrics. |
 
-These are planned boundaries only. No acquisition, feature, allocation, portfolio, simulation,
-or metric algorithm is implemented by this architecture skeleton.
+These responsibilities are implemented in dedicated modules; their financial and
+temporal rules are specified in the corresponding step documentation. This document
+defines the stable boundaries and dependency direction rather than duplicating those
+algorithms.
 
 ## Data flow
 
@@ -49,9 +51,9 @@ source/local data
     -> experiment comparison
 ```
 
-The signal-producing component must receive history only through its signal time. The exact
-rules for signal dates, execution/valuation dates, and missing observations belong to later
-data and simulation specifications; this skeleton does not invent them.
+The signal-producing component receives only the history allowed by the configured
+availability cutoff. Signal, execution, and valuation dates remain distinct; holidays and
+missing observations are not synthesized.
 
 ## Import dependencies
 
@@ -89,11 +91,11 @@ get_target_weights(
 ) -> Mapping[str, float]
 ```
 
-The returned mapping is called `target_weights` and is keyed by currency code. It expresses
-the requested portfolio allocation, not orders, units, or realized holdings. In V1, its
-intended use is long-only and unleveraged; detailed validation, normalization tolerances,
-availability rules, and execution timing must be established in the later portfolio and
-backtest steps. This interface does not supply defaults for missing or invalid values.
+The returned mapping is called `target_weights` and is keyed by currency code. It expresses the requested portfolio
+allocation, not orders, units, or realized holdings. In V1, target weights are validated
+as long-only and unleveraged. The backtest applies the configured availability lag and
+rebalance policy without branching on a provider's implementation or strategy name.
+This interface does not supply defaults for missing or invalid values.
 
 The protocol is structural: a strategy or model can satisfy it without inheriting from a
 concrete base class. The backtest can therefore receive any provider that implements this

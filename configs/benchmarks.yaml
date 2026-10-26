@@ -1,0 +1,15 @@
+portfolio:
+  initial_capital_eur: 10000
+
+scenario:
+  transaction_cost_bps: 10
+  availability_lag_days: 7
+  development_fraction: 0.75
+  max_foreign_weight: 0.35
+  strategies:
+    - eur_cash
+    - buy_hold_equal_weight
+    - equal_weight_weekly
+    - fixed_4_currencies
+    - momentum_60
+    - inverse_volatility_60

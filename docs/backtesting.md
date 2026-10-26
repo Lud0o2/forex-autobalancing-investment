@@ -41,6 +41,12 @@ an order. If sparse data make two Friday signals map to the same next observatio
 the later overlapping signal is recorded as `execution_collision` rather than
 double-executed.
 
+The generic scenario setting `rebalance_policy` defaults to `weekly`. Its
+`initial_only` value schedules the first valid target once and records later Friday
+signals as `skipped_initial_only`; it is used for genuine Buy & Hold without making
+the engine depend on that strategy's name. The selected policy is independent of
+the provider's `TargetWeightProvider` implementation.
+
 Daily NAV, EUR cash, currency quantities, values, and realized weights are recorded
 after valuation and any order due on that observation. Transaction fees are taken
 from the portfolio and separately enumerated by the portfolio layer. The annual

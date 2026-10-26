@@ -20,6 +20,7 @@ dependencies = [
 [project.scripts]
 forex-v1-import = "forex_v1.data.cli:main"
 forex-v1-features = "forex_v1.features.builder:main"
+forex-v1-evaluate = "forex_v1.evaluation.reporting:main"
 
 [project.optional-dependencies]
 dev = [

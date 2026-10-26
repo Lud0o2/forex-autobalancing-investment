@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 
@@ -26,6 +26,7 @@ class BacktestConfig:
     end_date: date | None = None
     signal_weekday: int = 4
     strategy_name: str = "fixed_weight_test"
+    rebalance_policy: Literal["weekly", "initial_only"] = "weekly"
 
     def __post_init__(self) -> None:
         if (
@@ -53,6 +54,8 @@ class BacktestConfig:
             raise BacktestConfigError("availability_lag_days must be an integer of at least 7 days")
         if self.signal_weekday != 4:
             raise BacktestConfigError("The V1 signal weekday must be Friday (4)")
+        if self.rebalance_policy not in {"weekly", "initial_only"}:
+            raise BacktestConfigError("rebalance_policy must be 'weekly' or 'initial_only'")
         if self.start_date is not None and (
             isinstance(self.start_date, datetime) or not isinstance(self.start_date, date)
         ):
@@ -109,6 +112,7 @@ def load_backtest_config(path: str | Path) -> BacktestConfig:
         start_date=_config_date(scenario.get("start_date"), "start_date"),
         end_date=_config_date(scenario.get("end_date"), "end_date"),
         strategy_name=scenario.get("strategy_name", "fixed_weight_test"),
+        rebalance_policy=scenario.get("rebalance_policy", "weekly"),
     )
 
 

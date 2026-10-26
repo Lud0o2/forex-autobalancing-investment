@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from bisect import bisect_right
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -159,8 +160,8 @@ def _as_of_market_date(
     availability_lag_days: int,
 ) -> date | None:
     cutoff = signal_date - timedelta(days=availability_lag_days)
-    eligible = [market_date for market_date in market_dates if market_date <= cutoff]
-    return eligible[-1] if eligible else None
+    index = bisect_right(market_dates, cutoff) - 1
+    return market_dates[index] if index >= 0 else None
 
 
 def _state_to_mapping(state: PortfolioState) -> dict[str, Any]:
@@ -179,6 +180,7 @@ def run_backtest(
     config: BacktestConfig,
     *,
     initial_state: PortfolioState | None = None,
+    history_frame: pd.DataFrame | None = None,
 ) -> BacktestResult:
     """Simulate daily valuations, Friday signals, and next-observation execution.
 
@@ -196,6 +198,17 @@ def run_backtest(
     if not simulation_dates:
         raise ValueError("No market observations fall within the configured backtest period")
 
+    if history_frame is None:
+        history_frame = build_history_frame(market_data, simulation_end)
+    else:
+        if "market_date" not in history_frame:
+            raise ValueError("Cached strategy history must contain market_date")
+        if not history_frame["market_date"].is_monotonic_increasing:
+            raise ValueError("Cached strategy history must be chronological")
+        if not history_frame.empty and history_frame["market_date"].max() > simulation_end:
+            raise ValueError("Cached strategy history contains observations after the backtest period")
+    history_dates = tuple(history_frame["market_date"])
+
     if initial_state is None:
         initial_state = create_portfolio(
             config.initial_capital_eur,
@@ -208,7 +221,11 @@ def run_backtest(
     executions: list[BacktestExecution] = []
     scheduled: dict[date, tuple[BacktestDecision, dict[str, float]]] = {}
     daily_records: list[BacktestDailyRecord] = []
+    state_by_date: dict[date, PortfolioState] = {}
+    initial_only_consumed = False
+
     def consider_signal(signal_date: date) -> None:
+        nonlocal initial_only_consumed
         cutoff = signal_date - timedelta(days=config.availability_lag_days)
         information_date = _as_of_market_date(
             signal_date,
@@ -224,6 +241,19 @@ def run_backtest(
                     target_weights=None,
                     execution_date=None,
                     status="no_eligible_observation",
+                )
+            )
+            return
+
+        if config.rebalance_policy == "initial_only" and initial_only_consumed:
+            decisions.append(
+                BacktestDecision(
+                    signal_date=signal_date,
+                    information_cutoff_date=cutoff,
+                    information_market_date=information_date,
+                    target_weights=None,
+                    execution_date=None,
+                    status="skipped_initial_only",
                 )
             )
             return
@@ -250,10 +280,11 @@ def run_backtest(
             return
 
         information_state = mark_to_market(
-            state,
+            state_by_date.get(information_date, initial_state),
             market_data.prices_by_date[information_date],
         )
-        history = build_history_frame(market_data, information_date)
+        history_stop = bisect_right(history_dates, information_date)
+        history = history_frame.iloc[:history_stop].copy()
         target_weights = validate_target_weights(
             provider.get_target_weights(history, _state_to_mapping(information_state))
         )
@@ -269,6 +300,8 @@ def run_backtest(
         decisions.append(decision)
         if execution_date is not None:
             scheduled[execution_date] = (decision, dict(target_weights))
+        if config.rebalance_policy == "initial_only":
+            initial_only_consumed = True
 
     for market_date in simulation_dates:
         while signal_index < len(signals) and signals[signal_index] <= market_date:
@@ -318,6 +351,7 @@ def run_backtest(
                 weights=dict(valuation.weights),
             )
         )
+        state_by_date[market_date] = state
 
     while signal_index < len(signals):
         consider_signal(signals[signal_index])

@@ -249,6 +249,59 @@ def test_last_signal_is_recorded_without_inventing_an_execution():
     assert all(execution.execution_date > execution.signal_date for execution in result.executions)
 
 
+def test_initial_only_policy_executes_buy_and_hold_once_and_skips_later_fridays():
+    data = weekday_market_data(date(2024, 1, 1), date(2024, 1, 26))
+
+    class CountingProvider:
+        calls = 0
+
+        def get_target_weights(self, history_until_t, current_state):
+            self.calls += 1
+            return {"EUR": 0.5, "USD": 0.5}
+
+    provider = CountingProvider()
+    run_config = BacktestConfig(
+        initial_capital_eur=10_000,
+        transaction_cost_bps=10,
+        availability_lag_days=7,
+        target_weights={"EUR": 1.0},
+        start_date=date(2024, 1, 1),
+        end_date=date(2024, 1, 26),
+        rebalance_policy="initial_only",
+    )
+
+    result = run_backtest(data, provider, run_config)
+
+    assert provider.calls == 1
+    assert len(result.executions) == 1
+    assert result.decisions[0].status == "no_eligible_observation"
+    assert result.decisions[1].status == "executed"
+    assert all(item.status == "skipped_initial_only" for item in result.decisions[2:])
+    assert len(result.executions[0].rebalance.transactions) == 1
+
+
+def test_provider_current_state_is_reconstructed_at_information_date():
+    data = weekday_market_data(date(2024, 1, 1), date(2024, 1, 26))
+
+    class StateCapturingProvider:
+        def __init__(self):
+            self.states = []
+
+        def get_target_weights(self, history_until_t, current_state):
+            self.states.append(current_state)
+            return {"USD": 1.0}
+
+    provider = StateCapturingProvider()
+    result = run_backtest(data, provider, config({"EUR": 1.0}))
+
+    assert len(result.decisions) - 1 == len(provider.states)
+    assert result.decisions[2].information_market_date == date(2024, 1, 12)
+    assert all(quantity == 0 for quantity in provider.states[1]["units"].values())
+    assert provider.states[1]["cash_eur"] == pytest.approx(10_000)
+    assert result.decisions[3].information_market_date == date(2024, 1, 19)
+    assert provider.states[2]["units"]["USD"] > 0
+
+
 def test_runs_are_reproducible_and_report_exports_reconstruct_daily_outputs(tmp_path):
     data = weekday_market_data(date(2024, 1, 1), date(2024, 1, 26))
     provider = FixedWeightProvider({"EUR": 0.5, "USD": 0.5})
