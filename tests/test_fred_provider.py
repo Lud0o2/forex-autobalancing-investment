@@ -175,6 +175,93 @@ def test_temporary_http_error_is_retried(monkeypatch):
     assert observations[0].quote_per_base == 1.08
 
 
+def test_fetch_raw_series_paginates_and_preserves_logical_request_params(monkeypatch):
+    monkeypatch.setenv("FRED_API_KEY", "test-key")
+    first_page = FakeResponse(
+        {
+            "count": "3",
+            "offset": 0,
+            "limit": 2,
+            "observations": [
+                {"date": "2025-01-02", "value": "1.08"},
+                {"date": "2025-01-03", "value": "1.09"},
+            ],
+        }
+    )
+    second_page = FakeResponse(
+        {
+            "count": "3",
+            "offset": 2,
+            "limit": 2,
+            "observations": [{"date": "2025-01-06", "value": "1.10"}],
+        }
+    )
+    session = FakeSession([first_page, second_page])
+    client = FredClient(session=session, page_size=2, retry_backoff_seconds=0)
+
+    response = client.fetch_raw_series("DEXUSEU")
+
+    assert len(response.payload["observations"]) == 3
+    assert response.payload["count"] == "3"
+    assert response.payload["limit"] == 2
+    assert response.request_params["offset"] == 0
+    assert [call["params"]["offset"] for call in session.calls] == [0, 2]
+    assert all(call["params"]["api_key"] == "test-key" for call in session.calls)
+
+
+def test_fetch_raw_series_rejects_missing_pagination_page(monkeypatch):
+    monkeypatch.setenv("FRED_API_KEY", "test-key")
+    session = FakeSession(
+        [
+            FakeResponse(
+                {
+                    "count": "3",
+                    "observations": [
+                        {"date": "2025-01-02", "value": "1.08"},
+                        {"date": "2025-01-03", "value": "1.09"},
+                    ],
+                }
+            ),
+            FakeResponse({"count": "3", "observations": []}),
+        ]
+    )
+    client = FredClient(session=session, page_size=2, retry_backoff_seconds=0)
+
+    with pytest.raises(FredResponseError, match="incomplete page"):
+        client.fetch_raw_series("DEXUSEU")
+
+
+def test_fetch_raw_series_rejects_count_changes_between_pages(monkeypatch):
+    monkeypatch.setenv("FRED_API_KEY", "test-key")
+    session = FakeSession(
+        [
+            FakeResponse(
+                {
+                    "count": "3",
+                    "observations": [
+                        {"date": "2025-01-02", "value": "1.08"},
+                        {"date": "2025-01-03", "value": "1.09"},
+                    ],
+                }
+            ),
+            FakeResponse(
+                {
+                    "count": "4",
+                    "offset": 2,
+                    "observations": [
+                        {"date": "2025-01-06", "value": "1.10"},
+                        {"date": "2025-01-07", "value": "1.11"},
+                    ],
+                }
+            ),
+        ]
+    )
+    client = FredClient(session=session, page_size=2, retry_backoff_seconds=0)
+
+    with pytest.raises(FredResponseError, match="count changed"):
+        client.fetch_raw_series("DEXUSEU")
+
+
 def test_non_temporary_http_error_is_not_retried(monkeypatch):
     monkeypatch.setenv("FRED_API_KEY", "test-key")
     session = FakeSession([FakeResponse(status_code=401)])
@@ -275,7 +362,8 @@ def test_fred_availability_is_not_invented():
 def test_response_with_truncated_observation_count_is_rejected(monkeypatch):
     monkeypatch.setenv("FRED_API_KEY", "test-key")
     payload = {"count": "2", "observations": [{"date": "2025-01-02", "value": "1.08"}]}
-    client = FredClient(session=FakeSession([FakeResponse(payload)]), retry_backoff_seconds=0)
+    session = FakeSession([FakeResponse(payload), FakeResponse({"count": "2", "observations": []})])
+    client = FredClient(session=session, retry_backoff_seconds=0)
 
     with pytest.raises(FredResponseError, match="incomplete"):
         client.fetch_series("DEXUSEU")

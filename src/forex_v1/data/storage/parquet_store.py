@@ -140,6 +140,13 @@ def write_observations(
 ) -> ParquetSnapshot:
     """Validate and atomically write an immutable, content-addressed Parquet snapshot."""
     rows = _validate_for_series(series_id, observations, raw_file_id)
+    series_directory = Path(processed_root) / "fred" / series_id
+    if series_directory.exists():
+        for existing_path in sorted(series_directory.glob("*.parquet")):
+            existing = read_parquet(existing_path)
+            if existing.observations == rows:
+                return existing
+
     records = [_record(observation, series_id, raw_file_id) for observation in rows]
     content_digest = hashlib.sha256(_canonical_rows(records)).hexdigest()
     output_path = (
@@ -271,7 +278,30 @@ def rebuild_from_raw(
         raw_snapshot: RawFredSnapshot = read_raw_response(manifest_path)
     except RawStoreError as error:
         raise ParquetStoreError(f"Cannot rebuild from raw response: {error}") from error
-    observations = parse_fred_observations(raw_snapshot.series_id, raw_snapshot.payload)
+    request_params = raw_snapshot.request_params
+    requested_dates: dict[str, date | None] = {}
+    for parameter, field_name in (
+        ("observation_start", "start_date"),
+        ("observation_end", "end_date"),
+    ):
+        raw_date = request_params.get(parameter)
+        if raw_date is None:
+            requested_dates[field_name] = None
+            continue
+        if not isinstance(raw_date, str):
+            raise ParquetStoreError(f"Raw request parameter {parameter} must be a date string")
+        try:
+            requested_dates[field_name] = date.fromisoformat(raw_date)
+        except ValueError as error:
+            raise ParquetStoreError(
+                f"Raw request parameter {parameter} is not a valid ISO date"
+            ) from error
+    observations = parse_fred_observations(
+        raw_snapshot.series_id,
+        raw_snapshot.payload,
+        start_date=requested_dates["start_date"],
+        end_date=requested_dates["end_date"],
+    )
     return write_observations(
         processed_root,
         raw_snapshot.series_id,

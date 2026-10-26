@@ -108,3 +108,53 @@ From the repository root, run the suite using the project environment:
 
 The provider tests use fake responses and an injected fake HTTP session; they do not send
 network requests and do not need a real API key.
+
+## Explicit import and coverage workflow
+
+The `forex-v1-import` command requires an explicit mode. A dry run is offline and does not
+create raw or processed market-data files:
+
+```powershell
+.\.venv\Scripts\python.exe -m forex_v1.data.cli --dry-run
+```
+
+To authorize a real request, provide the FRED key through `FRED_API_KEY` and use
+`--execute`. The default request is the required pilot (`DEXUSEU`, 2024-01-01 through
+2024-12-31); series and dates can be selected explicitly:
+
+```powershell
+.\.venv\Scripts\python.exe -m forex_v1.data.cli --execute --series DEXUSEU --start-date 2024-01-01 --end-date 2024-12-31
+```
+
+Only after the 2024 pilot succeeds, the full-history option requests all seven configured
+series from 1999-01-01 through the last complete UTC day:
+
+```powershell
+.\.venv\Scripts\python.exe -m forex_v1.data.cli --execute --full-history
+```
+
+Each completed response is preserved in `data/raw/fred/<SERIES_ID>/`, then validated and
+reconstructed into a versioned Parquet file in `data/processed/fred/<SERIES_ID>/`.
+Paginated requests are combined only when the declared FRED count is fully received.
+Errors for one series are reported while the remaining selected series are attempted.
+The workflow writes `reports/data_coverage.json` and
+`reports/data_coverage.md`; these are local generated reports and are ignored by Git.
+They include raw content hashes and raw/processed file identifiers for provenance.
+Each retrieval remains a distinct immutable raw snapshot. Reprocessing identical
+standardized observations reuses the existing Parquet snapshot; if reused, the report and
+CLI show the original raw file identifier referenced by that Parquet file as well as the
+current retrieval's raw identifier.
+The reported coverage percentage is the number of valid observations divided by the
+number of records returned by FRED (including explicit missing values and any duplicate
+records); weekday-gap counts are reported separately and are not a holiday calendar.
+The weekday-gap counts are descriptive: the API response alone cannot reliably separate
+public holidays from genuine coverage gaps. Common-history metrics use the exact
+intersection of valid dates and do not forward-fill or interpolate.
+
+No historical `available_at` timestamp is inferred during import. Even after a successful
+download, these H.10 observations are not a point-in-time-certified history for executable
+decisions. Verify local orchestration and report behavior without network access using:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q tests\test_importer.py tests\test_fred_provider.py
+```

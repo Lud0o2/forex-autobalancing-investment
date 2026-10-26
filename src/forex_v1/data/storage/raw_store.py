@@ -20,6 +20,7 @@ SAFE_REQUEST_PARAMS = frozenset(
         "limit",
         "observation_end",
         "observation_start",
+        "offset",
         "series_id",
         "sort_order",
     }

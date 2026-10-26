@@ -17,6 +17,9 @@ dependencies = [
     "requests>=2.31",
 ]
 
+[project.scripts]
+forex-v1-import = "forex_v1.data.cli:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
