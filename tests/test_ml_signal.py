@@ -13,6 +13,7 @@ from forex_v1.models.signal_diagnostic import (
     _mean_prediction,
     _spearman,
     _split_and_scale_inner_train,
+    _univariate_correlation_grid,
     fit_ridge,
     predict_ridge,
     sha256_file,
@@ -95,6 +96,22 @@ def test_correlation_is_near_zero_for_synthetic_noise():
 def test_correlations_are_undefined_for_constant_inputs():
     assert _correlation(np.ones(10), np.arange(10, dtype=np.float64)) is None
     assert _spearman(np.ones(10), np.arange(10, dtype=np.float64)) is None
+
+
+def test_predictive_correlation_grid_preserves_currency_and_indicator_order():
+    correlations = [
+        {"feature": "USD__log_return_1", "pearson": 0.25},
+        {"feature": "GBP__log_return_1", "pearson": -0.4},
+        {"feature": "USD__rsi_14", "pearson": None},
+    ]
+
+    grid = _univariate_correlation_grid(correlations, value_key="pearson")
+
+    assert grid.shape == (7, 2)
+    assert grid[0, 0] == pytest.approx(0.25)
+    assert grid[1, 0] == pytest.approx(-0.4)
+    assert np.isnan(grid[0, 1])
+    assert np.isnan(grid[2:, :]).all()
 
 
 def test_ridge_supports_multiple_outputs_and_reproduces_predictions():

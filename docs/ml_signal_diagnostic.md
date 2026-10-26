@@ -53,6 +53,12 @@ pas une sélection d'indicateurs. Les corrélations de features et les profils
 complets (moyenne, écart-type, bornes, cardinalité, valeurs manquantes/non
 finies et constance) figurent dans le rapport JSON.
 
+Les figures incluent la matrice de corrélation des features, une carte Pearson
+des features versus le rendement futur de leur devise, une vue par fenêtre pour
+la stabilité temporelle et les R² comparatifs par devise. Les corrélations
+pooled et les dix associations de plus forte amplitude sont uniquement
+descriptives parmi 91 tests et ne servent pas à sélectionner un indicateur.
+
 ## Résultat de l'expérience actuelle
 
 Les validations internes contiennent respectivement 52, 105 et 157 exemples;

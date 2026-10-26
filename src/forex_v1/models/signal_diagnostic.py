@@ -707,6 +707,89 @@ def _plot_feature_correlation(
     plt.close(figure)
 
 
+def _univariate_correlation_grid(
+    correlations: Sequence[dict[str, Any]],
+    *,
+    value_key: str,
+) -> np.ndarray:
+    """Arrange own-currency predictive correlations as currency-by-indicator values."""
+    indicators = tuple(
+        dict.fromkeys(_feature_parts(item["feature"])[1] for item in correlations)
+    )
+    values = np.full((len(FOREIGN_CURRENCIES), len(indicators)), np.nan, dtype=np.float64)
+    for item in correlations:
+        currency, indicator = _feature_parts(item["feature"])
+        value = item.get(value_key)
+        values[FOREIGN_CURRENCIES.index(currency), indicators.index(indicator)] = (
+            np.nan if value is None else float(value)
+        )
+    return values
+
+
+def _plot_predictive_correlations(
+    correlations: Sequence[dict[str, Any]],
+    path: Path,
+) -> None:
+    values = _univariate_correlation_grid(correlations, value_key="pearson")
+    indicators = tuple(
+        dict.fromkeys(_feature_parts(item["feature"])[1] for item in correlations)
+    )
+    figure, axis = plt.subplots(figsize=(16, 5))
+    image = axis.imshow(
+        np.ma.masked_invalid(values),
+        cmap="RdBu_r",
+        vmin=-0.25,
+        vmax=0.25,
+        aspect="auto",
+    )
+    axis.set_xticks(np.arange(len(indicators)), labels=indicators, rotation=45, ha="right")
+    axis.set_yticks(np.arange(len(FOREIGN_CURRENCIES)), labels=FOREIGN_CURRENCIES)
+    axis.set_title("Pearson feature → rendement futur de la même devise (pooled, validation interne)")
+    figure.colorbar(image, ax=axis, label="Pearson r")
+    figure.tight_layout()
+    figure.savefig(path, dpi=150)
+    plt.close(figure)
+
+
+def _plot_correlation_stability(
+    correlations: Sequence[dict[str, Any]],
+    path: Path,
+) -> None:
+    indicators = tuple(
+        dict.fromkeys(_feature_parts(item["feature"])[1] for item in correlations)
+    )
+    figure, axes = plt.subplots(1, 3, figsize=(19, 6), sharey=True)
+    images = []
+    for fold_index, axis in enumerate(axes):
+        values = _univariate_correlation_grid(
+            [
+                {
+                    **item,
+                    "pearson": item["fold_pearson"][fold_index],
+                }
+                for item in correlations
+            ],
+            value_key="pearson",
+        )
+        image = axis.imshow(
+            np.ma.masked_invalid(values),
+            cmap="RdBu_r",
+            vmin=-0.3,
+            vmax=0.3,
+            aspect="auto",
+        )
+        images.append(image)
+        axis.set_title(f"Validation interne {fold_index + 1}")
+        axis.set_xticks(np.arange(len(indicators)), labels=indicators, rotation=60, ha="right", fontsize=8)
+        axis.set_yticks(np.arange(len(FOREIGN_CURRENCIES)), labels=FOREIGN_CURRENCIES)
+    figure.suptitle("Stabilité temporelle des corrélations Pearson feature → rendement futur")
+    color_axis = figure.add_axes((0.92, 0.22, 0.015, 0.58))
+    figure.colorbar(images[-1], cax=color_axis, label="Pearson r")
+    figure.subplots_adjust(bottom=0.28, top=0.83, wspace=0.08, right=0.89)
+    figure.savefig(path, dpi=150)
+    plt.close(figure)
+
+
 def _plot_r2(
     folds: Sequence[dict[str, Any]],
     pooled: dict[str, Any],
@@ -835,6 +918,8 @@ def _render_report(payload: dict[str, Any]) -> str:
             "",
             "Chaque feature est reliée uniquement au rendement futur de sa propre devise. Les trois colonnes de validation interne sont présentées séparément; pooled agrège ces segments disjoints à titre descriptif. Aucune feature n'est choisie. Les corrélations ne sont pas des preuves de prédictivité, particulièrement avec 91 comparaisons corrélées et de petits segments.",
             "",
+            "Les graphiques de corrélation prédictive et de stabilité sont descriptifs : la sélection des plus fortes valeurs parmi 91 tests n'est pas une preuve de signal.",
+            "",
             "| Devise | Indicateur | n (fold 1/2/3) | Pearson pooled | Spearman pooled | Pearson fold 1 | fold 2 | fold 3 | Signe stable (n/3) | Pearson après exclusion des 1% extrêmes |",
             "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|",
         ]
@@ -848,6 +933,26 @@ def _render_report(payload: dict[str, Any]) -> str:
             f"{_format(fold_corr[0])} | {_format(fold_corr[1])} | {_format(fold_corr[2])} | "
             f"{item['same_sign_fold_count']}/3 | "
             f"{_format(item['trimmed_pearson_1pct_each_tail'])} |"
+        )
+    strongest = sorted(
+        payload["univariate_correlations"],
+        key=lambda item: abs(item["pearson"]) if item["pearson"] is not None else -1,
+        reverse=True,
+    )[:10]
+    lines.extend(
+        [
+            "",
+            "Les dix plus fortes corrélations pooled en valeur absolue sont listées à titre descriptif, sans sélection ni interprétation prédictive :",
+            "",
+            "| Devise | Indicateur | Pearson | Spearman | Pearson folds 1 / 2 / 3 |",
+            "|---|---|---:|---:|---|",
+        ]
+    )
+    for item in strongest:
+        lines.append(
+            f"| {item['currency']} | {item['indicator']} | {_format(item['pearson'])} | "
+            f"{_format(item['spearman'])} | "
+            f"{' / '.join(_format(value) for value in item['fold_pearson'])} |"
         )
 
     lines.extend(
@@ -959,6 +1064,8 @@ def _render_report(payload: dict[str, Any]) -> str:
             "## Graphiques",
             "",
             f"- Carte de corrélation des features : `./{payload['charts']['feature_correlations']}`",
+            f"- Corrélations pooled avec les rendements futurs : `./{payload['charts']['predictive_correlations']}`",
+            f"- Stabilité des corrélations par période : `./{payload['charts']['correlation_stability']}`",
             f"- R² par devise, modèle et fenêtre : `./{payload['charts']['r2']}`",
             "",
         ]
@@ -1182,8 +1289,12 @@ def run_diagnostic(
     )
     groups = _grouped_feature_profiles(feature_profiles, distribution_shifts)
     correlation_chart = charts_dir / "ml_signal_feature_correlation.png"
+    predictive_correlation_chart = charts_dir / "ml_signal_predictive_correlations.png"
+    correlation_stability_chart = charts_dir / "ml_signal_correlation_stability.png"
     r2_chart = charts_dir / "ml_signal_r2.png"
     _plot_feature_correlation(corr_matrix, feature_columns, correlation_chart)
+    _plot_predictive_correlations(pooled_univariate, predictive_correlation_chart)
+    _plot_correlation_stability(pooled_univariate, correlation_stability_chart)
     pooled_report_metrics = {
         "model_metrics": pooled_metrics,
         "cross_sectional_rank": pooled_rank,
@@ -1248,6 +1359,8 @@ def run_diagnostic(
         },
         "charts": {
             "feature_correlations": correlation_chart.name,
+            "predictive_correlations": predictive_correlation_chart.name,
+            "correlation_stability": correlation_stability_chart.name,
             "r2": r2_chart.name,
         },
     }
