@@ -2,11 +2,28 @@ import json
 from datetime import date, timedelta
 
 import pandas as pd
+import pytest
 
 from forex_v1.backtest.data import MarketData
 from forex_v1.benchmarks import run_benchmark_comparison
 from forex_v1.data.schemas import SUPPORTED_CURRENCIES
+from forex_v1.evaluation.metrics import calculate_metrics
 from forex_v1.strategies import BENCHMARK_NAMES
+
+COMPARISON_COLUMNS = (
+    "strategy_name",
+    "cagr",
+    "total_return",
+    "maximum_drawdown",
+    "drawdown_over_20_percent",
+    "sharpe_ratio",
+    "sortino_ratio",
+    "calmar_ratio",
+    "annualized_volatility",
+    "total_fees_eur",
+    "turnover",
+    "final_nav_eur",
+)
 
 
 def synthetic_market_data(*, change_after: date | None = None):
@@ -85,6 +102,14 @@ def test_comparison_uses_one_development_nav_signal_and_execution_calendar(tmp_p
     assert result["strategies"]["inverse_volatility_60"]["metrics"]["maximum_drawdown"] <= 0
     assert (tmp_path / "benchmark_comparison.md").is_file()
     assert (tmp_path / "benchmark_comparison.json").is_file()
+    payload = json.loads((tmp_path / "benchmark_comparison.json").read_text(encoding="utf-8"))
+    markdown = (tmp_path / "benchmark_comparison.md").read_text(encoding="utf-8")
+    header = next(line for line in markdown.splitlines() if "strategy_name" in line)
+    assert tuple(header.strip("| ").split(" | ")) == COMPARISON_COLUMNS
+    assert payload["metric_units"]["total_fees_eur"] == "EUR"
+    assert payload["metric_units"]["turnover"].startswith("x ")
+    assert payload["metric_units"]["cagr"] == "fraction (rendered as %)"
+    assert payload["metric_units"]["final_nav_eur"] == "EUR"
     for name in BENCHMARK_NAMES:
         folder = tmp_path / "benchmarks" / name
         assert {path.name for path in folder.iterdir()} == {
@@ -93,6 +118,46 @@ def test_comparison_uses_one_development_nav_signal_and_execution_calendar(tmp_p
             "decisions.csv",
             "transactions.csv",
         }
+        transactions = pd.read_csv(folder / "transactions.csv")
+        nav = pd.read_csv(folder / "nav.csv", parse_dates=["market_date"])
+        nav_series = nav.set_index("market_date")["nav_eur"]
+        notional = float(transactions["notional_eur"].sum())
+        fees = float(transactions["fee_eur"].sum())
+        strategy = payload["strategies"][name]
+        evaluation_metrics = calculate_metrics(nav_series, transactions=transactions)
+        assert fees == pytest.approx(strategy["metrics"]["total_fees_eur"])
+        assert fees == pytest.approx(strategy["total_fees_eur"])
+        assert notional == pytest.approx(strategy["metrics"]["total_traded_notional_eur"])
+        assert notional / float(nav_series.mean()) == pytest.approx(
+            strategy["metrics"]["turnover"],
+            rel=1e-10,
+        )
+        for metric in (
+            "total_fees_eur",
+            "total_traded_notional_eur",
+            "turnover",
+            "cagr",
+            "total_return",
+            "maximum_drawdown",
+        ):
+            assert evaluation_metrics[metric] == pytest.approx(
+                strategy["metrics"][metric],
+                rel=1e-10,
+                abs=1e-10,
+            )
+        if not transactions.empty:
+            assert (
+                transactions["fee_eur"].to_numpy()
+                == pytest.approx(transactions["notional_eur"].to_numpy() * 0.001)
+            )
+        report_line = next(
+            line for line in markdown.splitlines() if line.startswith(f"| {name} |")
+        )
+        report_values = report_line.strip("| ").split(" | ")
+        assert report_values[COMPARISON_COLUMNS.index("total_fees_eur")].endswith(" EUR")
+        assert report_values[COMPARISON_COLUMNS.index("turnover")].endswith("×")
+        assert "%" not in report_values[COMPARISON_COLUMNS.index("turnover")]
+        assert report_values[COMPARISON_COLUMNS.index("total_fees_eur")].endswith("EUR")
 
 
 def test_future_market_and_features_do_not_change_development_decisions_or_metrics(tmp_path):

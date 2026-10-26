@@ -143,7 +143,7 @@ def generate_signal_dates(
     first_market_date = market_data.dates[0]
     last_market_date = market_data.dates[-1]
     start = max(config.start_date or first_market_date, first_market_date)
-    end = config.end_date or last_market_date
+    end = config.signal_end_date or config.end_date or last_market_date
     if start > end:
         return ()
     first_friday = start + timedelta(days=(config.signal_weekday - start.weekday()) % 7)

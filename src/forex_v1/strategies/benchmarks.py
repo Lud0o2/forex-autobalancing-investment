@@ -95,7 +95,7 @@ class EqualWeightWeeklyProvider:
 
 
 class Momentum60Provider:
-    """Hold up to three positive 60-observation log returns at 25% each."""
+    """Equal-weight up to three positive 60-observation log returns."""
 
     def get_target_weights(
         self,
@@ -112,8 +112,9 @@ class Momentum60Provider:
             key=lambda item: (-item[1], item[0]),
         )[:3]
         weights = {currency: 0.0 for currency in SUPPORTED_CURRENCIES}
+        weight_per_currency = 1.0 / 3
         for currency, _ in eligible:
-            weights[currency] = 0.25
+            weights[currency] = weight_per_currency
         weights["EUR"] = 1.0 - math.fsum(weights.values())
         return validate_target_weights(weights)
 

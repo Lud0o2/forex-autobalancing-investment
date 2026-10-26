@@ -24,6 +24,7 @@ class BacktestConfig:
     target_weights: Mapping[str, float]
     start_date: date | None = None
     end_date: date | None = None
+    signal_end_date: date | None = None
     signal_weekday: int = 4
     strategy_name: str = "fixed_weight_test"
     rebalance_policy: Literal["weekly", "initial_only"] = "weekly"
@@ -66,6 +67,23 @@ class BacktestConfig:
             raise BacktestConfigError("end_date must be a calendar date or None")
         if self.start_date and self.end_date and self.start_date > self.end_date:
             raise BacktestConfigError("start_date must not be after end_date")
+        if self.signal_end_date is not None and (
+            isinstance(self.signal_end_date, datetime)
+            or not isinstance(self.signal_end_date, date)
+        ):
+            raise BacktestConfigError("signal_end_date must be a calendar date or None")
+        if (
+            self.signal_end_date is not None
+            and self.start_date is not None
+            and self.signal_end_date < self.start_date
+        ):
+            raise BacktestConfigError("signal_end_date must not be before start_date")
+        if (
+            self.signal_end_date is not None
+            and self.end_date is not None
+            and self.signal_end_date > self.end_date
+        ):
+            raise BacktestConfigError("signal_end_date must not be after end_date")
         if not isinstance(self.strategy_name, str) or not self.strategy_name.strip():
             raise BacktestConfigError("strategy_name must be a non-empty string")
         try:
@@ -111,6 +129,7 @@ def load_backtest_config(path: str | Path) -> BacktestConfig:
         target_weights=target_weights,
         start_date=_config_date(scenario.get("start_date"), "start_date"),
         end_date=_config_date(scenario.get("end_date"), "end_date"),
+        signal_end_date=_config_date(scenario.get("signal_end_date"), "signal_end_date"),
         strategy_name=scenario.get("strategy_name", "fixed_weight_test"),
         rebalance_policy=scenario.get("rebalance_policy", "weekly"),
     )

@@ -21,11 +21,16 @@ dependencies = [
 forex-v1-import = "forex_v1.data.cli:main"
 forex-v1-features = "forex_v1.features.builder:main"
 forex-v1-evaluate = "forex_v1.evaluation.reporting:main"
+forex-v1-ml-dataset = "forex_v1.models.dataset:main"
+forex-v1-mlp = "forex_v1.models.mlp_training:main"
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
     "ruff>=0.6",
+]
+ml = [
+    "torch>=2.2",
 ]
 
 [tool.setuptools.packages.find]

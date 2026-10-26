@@ -280,6 +280,49 @@ def test_initial_only_policy_executes_buy_and_hold_once_and_skips_later_fridays(
     assert len(result.executions[0].rebalance.transactions) == 1
 
 
+def test_signal_end_date_can_stop_decisions_before_daily_valuation_ends():
+    data = market_data_from_records(
+        {
+            market_date: prices()
+            for market_date in (
+                date(2023, 12, 29),
+                date(2024, 1, 4),
+                date(2024, 1, 5),
+                date(2024, 1, 8),
+                date(2024, 1, 11),
+                date(2024, 1, 12),
+                date(2024, 1, 15),
+                date(2024, 1, 18),
+                date(2024, 1, 19),
+                date(2024, 1, 22),
+            )
+        }
+    )
+    run_config = BacktestConfig(
+        initial_capital_eur=10_000,
+        transaction_cost_bps=10,
+        availability_lag_days=7,
+        target_weights={"USD": 1.0},
+        start_date=date(2024, 1, 4),
+        end_date=date(2024, 1, 22),
+        signal_end_date=date(2024, 1, 19),
+    )
+
+    result = run_backtest(data, FixedWeightProvider({"USD": 1.0}), run_config)
+
+    assert [decision.signal_date for decision in result.decisions] == [
+        date(2024, 1, 5),
+        date(2024, 1, 12),
+        date(2024, 1, 19),
+    ]
+    assert [execution.execution_date for execution in result.executions] == [
+        date(2024, 1, 8),
+        date(2024, 1, 15),
+        date(2024, 1, 22),
+    ]
+    assert result.daily_records[-1].market_date == date(2024, 1, 22)
+
+
 def test_provider_current_state_is_reconstructed_at_information_date():
     data = weekday_market_data(date(2024, 1, 1), date(2024, 1, 26))
 

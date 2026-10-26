@@ -40,8 +40,10 @@ EUR ne portent aucun intérêt; aucun levier, short ou carry n'est autorisé.
   EUR/USD/GBP/JPY à 25 % chacune, avec rééquilibrage hebdomadaire.
 - **Momentum 60 (`momentum_60`)** : classe les devises étrangères par
   log-rendement passé `log_return_60`, sélectionne les trois meilleures strictement
-  positives et leur alloue 25 % chacune. Chaque emplacement inutilisé reste en EUR;
-  ainsi, une seule devise éligible reçoit 25 %, pas 100 %.
+  positives et répartit le capital en tiers égaux entre les devises retenues. Les
+  tiers non utilisés restent en EUR : trois devises reçoivent chacune 1/3, deux
+  reçoivent chacune 1/3 avec 1/3 en EUR, une reçoit 1/3 avec 2/3 en EUR, et aucune
+  donne 100 % EUR.
 - **Inverse Volatility 60 (`inverse_volatility_60`)** : répartit l'allocation
   étrangère selon l'inverse de `volatility_60`, avec un plafond par devise
   cible configurable (35 % par défaut). Le surplus dû au plafond reste en EUR. Les
@@ -93,6 +95,13 @@ durée calendaire ACT/ACT, drawdown maximal, Sharpe et Sortino à taux sans risq
 Calmar, volatilité annualisée sur 252 observations par an (approximation), frais
 cumulés, turnover grossier et NAV finale. Les ratios non définis sont nuls dans le
 JSON (`null`), jamais infinis.
+
+Les frais du journal sont réconciliés par somme des `fee_eur` et contrôlés contre le
+notionnel de transactions multiplié par le taux configuré. Le turnover JSON est un
+multiplicateur sans dimension (`total_traded_notional_eur / mean(nav_eur)`); il est
+affiché avec le suffixe `×` dans les tableaux, tandis que les frais et le notionnel
+portent explicitement l'unité EUR. Les en-têtes du tableau de comparaison sont les
+noms des champs JSON correspondants.
 
 Les taux FRED H.10 sont des fixings de référence indicatifs. Leur date réelle de
 publication n'est pas disponible dans ces exports et n'est pas équivalente à la date

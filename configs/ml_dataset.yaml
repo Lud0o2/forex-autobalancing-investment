@@ -1,0 +1,22 @@
+development_fraction: 0.75
+availability_lag_days: 7
+
+# momentum_* columns duplicate the equivalent cumulative log_return_* columns.
+feature_names:
+  - log_return_1
+  - log_return_5
+  - log_return_20
+  - log_return_60
+  - rsi_14
+  - sma_relative_20
+  - sma_relative_50
+  - sma_relative_200
+  - volatility_20
+  - volatility_60
+  - bollinger_zscore_20
+  - channel_position_20
+  - drawdown_60
+
+fold_count: 3
+minimum_training_years: 5
+embargo_days: 0

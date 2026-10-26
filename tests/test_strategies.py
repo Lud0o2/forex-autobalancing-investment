@@ -53,35 +53,51 @@ def test_static_benchmarks_return_the_expected_configurable_targets():
         assert_valid_long_only(dict(weights))
 
 
-def test_momentum_selects_top_three_positive_log_returns_and_keeps_other_weight_in_eur():
-    values = {
-        "USD": 0.5,
-        "GBP": 0.4,
-        "JPY": 0.3,
-        "CHF": 0.2,
-        "CAD": -0.1,
-        "AUD": 0.0,
-        "NZD": None,
-    }
+@pytest.mark.parametrize(
+    ("eligible_count", "expected_foreign_weight", "expected_eur_weight"),
+    (
+        (0, 0.0, 1.0),
+        (1, 1 / 3, 2 / 3),
+        (2, 2 / 3, 1 / 3),
+        (3, 1.0, 0.0),
+    ),
+)
+def test_momentum_equal_weights_up_to_three_eligible_currencies(
+    eligible_count,
+    expected_foreign_weight,
+    expected_eur_weight,
+):
+    values = {currency: None for currency in FOREIGN_CURRENCIES}
+    eligible_currencies = [
+        currency for currency in FOREIGN_CURRENCIES if currency != "CHF"
+    ][:eligible_count]
+    for index, currency in enumerate(eligible_currencies):
+        values[currency] = 0.5 - index * 0.1
+    values["CHF"] = -0.1
 
     weights = Momentum60Provider().get_target_weights(history(values, "log_return_60"), {})
+    positive_weights = [
+        weight
+        for currency, weight in weights.items()
+        if currency != "EUR" and weight > 0
+    ]
 
-    assert weights["USD"] == pytest.approx(0.25)
-    assert weights["GBP"] == pytest.approx(0.25)
-    assert weights["JPY"] == pytest.approx(0.25)
-    assert weights["EUR"] == pytest.approx(0.25)
+    assert len(positive_weights) == eligible_count
+    assert sum(positive_weights) == pytest.approx(expected_foreign_weight)
+    assert weights["EUR"] == pytest.approx(expected_eur_weight)
+    assert all(weight == pytest.approx(1 / 3) for weight in positive_weights)
     assert_valid_long_only(dict(weights))
 
 
-def test_momentum_keeps_unused_slots_in_eur_and_ties_are_deterministic():
+def test_momentum_ties_are_deterministic_and_unused_thirds_stay_in_eur():
     values = {currency: None for currency in FOREIGN_CURRENCIES}
     values.update({"USD": 0.1, "GBP": 0.1})
 
     weights = Momentum60Provider().get_target_weights(history(values, "log_return_60"), {})
 
-    assert weights["GBP"] == pytest.approx(0.25)
-    assert weights["USD"] == pytest.approx(0.25)
-    assert weights["EUR"] == pytest.approx(0.5)
+    assert weights["GBP"] == pytest.approx(1 / 3)
+    assert weights["USD"] == pytest.approx(1 / 3)
+    assert weights["EUR"] == pytest.approx(1 / 3)
     assert sum(weight > 0 for currency, weight in weights.items() if currency != "EUR") == 2
 
 

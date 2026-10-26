@@ -47,6 +47,11 @@ signals as `skipped_initial_only`; it is used for genuine Buy & Hold without mak
 the engine depend on that strategy's name. The selected policy is independent of
 the provider's `TargetWeightProvider` implementation.
 
+For bounded validation windows, `signal_end_date` can end the decision calendar
+before `end_date` ends daily valuation. This permits including the final scheduled
+execution and its subsequent marked NAV without introducing an extra signal outside
+the selected validation sample. It defaults to `end_date`, preserving prior behavior.
+
 Daily NAV, EUR cash, currency quantities, values, and realized weights are recorded
 after valuation and any order due on that observation. Transaction fees are taken
 from the portfolio and separately enumerated by the portfolio layer. The annual

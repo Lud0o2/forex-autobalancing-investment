@@ -301,7 +301,73 @@ def _metric_rows(
 ) -> dict[str, Any]:
     metrics = calculate_metrics(result.nav_series, transactions=transactions)
     metrics["final_nav_eur"] = result.final_nav_eur
+    notional = math.fsum(float(value) for value in transactions["notional_eur"])
+    fees = math.fsum(float(value) for value in transactions["fee_eur"])
+    configured_fee_rate = result.config.transaction_cost_bps / 10_000
+    expected_fees = notional * configured_fee_rate
+    expected_turnover = notional / float(result.nav_series.mean())
+    if not math.isclose(fees, expected_fees, rel_tol=1e-10, abs_tol=1e-8):
+        raise ArithmeticError("Transaction fees do not match notional and configured fee rate")
+    if not math.isclose(metrics["total_fees_eur"], fees, rel_tol=1e-10, abs_tol=1e-8):
+        raise ArithmeticError("Evaluation fees do not reconcile with the transaction ledger")
+    if not math.isclose(
+        metrics["total_traded_notional_eur"],
+        notional,
+        rel_tol=1e-10,
+        abs_tol=1e-8,
+    ):
+        raise ArithmeticError("Evaluation notional does not reconcile with the transaction ledger")
+    if not math.isclose(
+        metrics["turnover"],
+        expected_turnover,
+        rel_tol=1e-10,
+        abs_tol=1e-8,
+    ):
+        raise ArithmeticError("Evaluation turnover does not match notional divided by mean NAV")
+    metrics["drawdown_over_20_percent"] = (
+        abs(metrics["maximum_drawdown"]) > 0.20
+    )
     return metrics
+
+
+COMPARISON_COLUMNS = (
+    "strategy_name",
+    "cagr",
+    "total_return",
+    "maximum_drawdown",
+    "drawdown_over_20_percent",
+    "sharpe_ratio",
+    "sortino_ratio",
+    "calmar_ratio",
+    "annualized_volatility",
+    "total_fees_eur",
+    "turnover",
+    "final_nav_eur",
+)
+
+
+def _formatted_comparison_value(
+    field: str,
+    value: Any,
+) -> str:
+    if field in {
+        "cagr",
+        "total_return",
+        "maximum_drawdown",
+        "annualized_volatility",
+    }:
+        return _percent(value)
+    if field == "drawdown_over_20_percent":
+        return "Oui" if value else "Non"
+    if field == "strategy_name":
+        return str(value)
+    if field == "total_fees_eur":
+        return f"{float(value):,.2f} EUR"
+    if field == "turnover":
+        return f"{float(value):,.2f}×"
+    if field == "final_nav_eur":
+        return f"{float(value):,.2f} EUR"
+    return _number(value)
 
 
 def _write_charts(
@@ -344,20 +410,18 @@ def _write_charts(
             -(metrics[name]["cagr"] if metrics[name]["cagr"] is not None else 0.0),
         ),
     )
-    headers = ["Stratégie", "CAGR", "Total", "MDD", "Sharpe", "Sortino", "Frais EUR"]
+    headers = list(COMPARISON_COLUMNS)
     cells = [
         [
-            name,
-            _percent(metrics[name]["cagr"]),
-            _percent(metrics[name]["total_return"]),
-            _percent(metrics[name]["maximum_drawdown"]),
-            _number(metrics[name]["sharpe_ratio"]),
-            _number(metrics[name]["sortino_ratio"]),
-            _number(metrics[name]["total_fees_eur"]),
+            _formatted_comparison_value(
+                field,
+                name if field == "strategy_name" else metrics[name][field],
+            )
+            for field in COMPARISON_COLUMNS
         ]
         for name in ordered_names
     ]
-    figure, axis = plt.subplots(figsize=(13, max(3.5, 0.55 * (len(cells) + 2))))
+    figure, axis = plt.subplots(figsize=(20, max(3.5, 0.55 * (len(cells) + 2))))
     axis.axis("off")
     axis.table(cellText=cells, colLabels=headers, loc="center", cellLoc="center")
     axis.set_title("Classement descriptif par CAGR — période de développement", pad=18)
@@ -424,20 +488,19 @@ def _render_markdown(payload: Mapping[str, Any]) -> str:
         ),
     )
     table = [
-        "| Rang | Stratégie | CAGR | Rendement total | MDD | >20 % | Sharpe | Sortino | Calmar | Vol. ann. | Frais EUR | Turnover | NAV finale EUR |",
-        "|---:|---|---:|---:|---:|:---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| " + " | ".join(COMPARISON_COLUMNS) + " |",
+        "|---|" + "---:|" * (len(COMPARISON_COLUMNS) - 1),
     ]
-    for rank, row in enumerate(ordered, start=1):
+    for row in ordered:
         metrics = row["metrics"]
-        table.append(
-            f"| {rank} | {row['display_name']} | {_percent(metrics['cagr'])} | "
-            f"{_percent(metrics['total_return'])} | {_percent(metrics['maximum_drawdown'])} | "
-            f"{'Oui' if metrics['maximum_drawdown'] is not None and abs(metrics['maximum_drawdown']) > 0.20 else 'Non'} | "
-            f"{_number(metrics['sharpe_ratio'])} | {_number(metrics['sortino_ratio'])} | "
-            f"{_number(metrics['calmar_ratio'])} | {_percent(metrics['annualized_volatility'])} | "
-            f"{_number(metrics['total_fees_eur'], 2)} | {_number(metrics['turnover'])} | "
-            f"{_number(metrics['final_nav_eur'], 2)} |"
-        )
+        values = {
+            **metrics,
+            "strategy_name": row["strategy_name"],
+        }
+        table.append("| " + " | ".join(
+            _formatted_comparison_value(field, values[field])
+            for field in COMPARISON_COLUMNS
+        ) + " |")
     strategy_details = []
     for row in rows.values():
         if row["status"] != "completed":
@@ -476,6 +539,11 @@ def _render_markdown(payload: Mapping[str, Any]) -> str:
 
 {chr(10).join(table)}
 
+Les en-têtes reprennent les clés des métriques JSON. Les champs de rendement/risque
+sont des fractions affichées en pourcentage, `total_fees_eur` et `final_nav_eur` sont
+des montants en EUR, et `turnover` est un multiplicateur sans dimension affiché en ×
+(notionnel brut cumulé / NAV moyenne).
+
 Le tableau est un diagnostic sur une seule période de développement, et ne désigne pas
 une stratégie gagnante. L'exposition antérieure au backtest fixe 6B sur toute la période
 historique est documentée ; cette analyse ne prétend donc pas que le test final a été
@@ -498,9 +566,9 @@ Buy & Hold n'est exécutée qu'une fois ; ses poids dérivent ensuite avec le ma
 - Les dates de marché ne sont pas des dates de publication : les dates réelles de
   disponibilité des séries FRED sont inconnues. Le délai de 7 jours est une hypothèse
   conservatrice de recherche et non une garantie point-in-time.
-- Momentum 60 utilise les log-rendements historiques à 60 observations : trois devises
-  étrangères au plus, strictement positives, à 25 % chacune ; les emplacements inutilisés
-  restent en EUR.
+- Momentum 60 utilise les log-rendements historiques à 60 observations : les trois
+  meilleures devises étrangères strictement positives au plus sont équipondérées à un
+  tiers chacune. Chaque emplacement non utilisé reste en EUR.
 - Inverse Volatility 60 exclut volatilités absentes, non finies, nulles ou négatives ; le
   plafond cible est de {payload['configuration']['max_foreign_weight']:.0%} par devise et le
   surplus reste en EUR. Les poids réalisés peuvent dériver au-dessus du plafond entre
@@ -609,6 +677,7 @@ def run_benchmark_comparison(
             allocations[name] = allocations_frame
             reports[name] = {
                 "status": "completed",
+                "strategy_name": name,
                 "display_name": name.replace("_", " ").title(),
                 "rebalance_policy": policy,
                 "observation_count": len(result.daily_records),
@@ -710,6 +779,20 @@ def run_benchmark_comparison(
             "final_test_period_evaluated": False,
         },
         "source_sha256": source_hashes,
+        "metric_units": {
+            "cagr": "fraction (rendered as %)",
+            "total_return": "fraction (rendered as %)",
+            "maximum_drawdown": "fraction (rendered as %)",
+            "annualized_volatility": "fraction (rendered as %)",
+            "sharpe_ratio": "dimensionless ratio",
+            "sortino_ratio": "dimensionless ratio",
+            "calmar_ratio": "dimensionless ratio",
+            "drawdown_over_20_percent": "boolean",
+            "total_fees_eur": "EUR",
+            "total_traded_notional_eur": "EUR",
+            "final_nav_eur": "EUR",
+            "turnover": "x (gross traded notional / mean NAV)",
+        },
         "strategies": reports,
         "charts": {name: str(path.relative_to(output_root)) for name, path in charts.items()},
         "comparison_validation": {
