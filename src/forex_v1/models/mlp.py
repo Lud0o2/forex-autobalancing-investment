@@ -59,6 +59,7 @@ class GrowthLossResult:
     net_growth_factors: Tensor
     cost_fractions: Tensor
     pretrade_weights: Tensor
+    foreign_turnover: Tensor
     maximum_drawdown: Tensor
 
 
@@ -69,6 +70,7 @@ def differentiable_growth_loss(
     fee_rate: float = 0.001,
     drawdown_penalty: float = 0.0,
     drawdown_threshold: float = 0.20,
+    lambda_turnover: float = 0.0,
 ) -> GrowthLossResult:
     """Compute negative mean log net growth with sequential allocation drift.
 
@@ -88,6 +90,8 @@ def differentiable_growth_loss(
         raise ValueError("drawdown_penalty must be finite and non-negative")
     if not math.isfinite(drawdown_threshold) or not 0 < drawdown_threshold < 1:
         raise ValueError("drawdown_threshold must be finite and in (0, 1)")
+    if not math.isfinite(lambda_turnover) or lambda_turnover < 0:
+        raise ValueError("lambda_turnover must be finite and non-negative")
     if not bool(torch.isfinite(target_weights).all()) or not bool(torch.isfinite(asset_returns).all()):
         raise ValueError("weights and returns must be finite")
     if bool((target_weights < 0).any()) or not torch.allclose(
@@ -105,16 +109,19 @@ def differentiable_growth_loss(
     pretrade_rows: list[Tensor] = []
     factors: list[Tensor] = []
     cost_fractions: list[Tensor] = []
+    foreign_turnovers: list[Tensor] = []
     pretrade = initial_weights
     for index in range(target_weights.shape[0]):
         target = target_weights[index]
-        cost_fraction = fee_rate * torch.abs(target[1:] - pretrade[1:]).sum()
+        foreign_turnover = torch.abs(target[1:] - pretrade[1:]).sum()
+        cost_fraction = fee_rate * foreign_turnover
         gross_return = torch.dot(target, asset_returns[index])
         net_factor = (1.0 - cost_fraction) * (1.0 + gross_return)
         if not bool(torch.isfinite(net_factor)) or bool(net_factor <= 0):
             raise ValueError("net growth factor must be finite and positive")
         pretrade_rows.append(pretrade)
         cost_fractions.append(cost_fraction)
+        foreign_turnovers.append(foreign_turnover)
         factors.append(net_factor)
         if index + 1 < target_weights.shape[0]:
             post_return_values = target * (1.0 + asset_returns[index])
@@ -129,6 +136,8 @@ def differentiable_growth_loss(
     drawdowns = cumulative / peaks - 1.0
     maximum_drawdown = -drawdowns.min()
     loss = -torch.log(net_growth).mean()
+    turnover_tensor = torch.stack(foreign_turnovers)
+    loss = loss + lambda_turnover * turnover_tensor.mean()
     if drawdown_penalty:
         loss = loss + drawdown_penalty * torch.relu(maximum_drawdown - drawdown_threshold)
     return GrowthLossResult(
@@ -136,5 +145,6 @@ def differentiable_growth_loss(
         net_growth_factors=net_growth,
         cost_fractions=torch.stack(cost_fractions),
         pretrade_weights=torch.stack(pretrade_rows),
+        foreign_turnover=turnover_tensor,
         maximum_drawdown=maximum_drawdown,
     )

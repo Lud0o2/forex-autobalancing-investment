@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import date
 
 import numpy as np
@@ -20,9 +21,16 @@ from forex_v1.models.mlp import (
     differentiable_growth_loss,
 )
 from forex_v1.models.mlp_training import (
+    INNER_VALIDATION_FRACTION,
+    LoadedFold,
+    MLPTrainingConfig,
     MLPTrainingError,
     MLPWeightProvider,
+    _fit_outer_model,
+    _inner_validation_partition,
     _load_fold,
+    _synthetic_accounting_cases,
+    _train_fold,
     scaler_from_payload,
 )
 from forex_v1.models.temporal import FoldStandardizer
@@ -97,6 +105,8 @@ def test_fees_are_zero_for_unchanged_drifted_holdings_and_positive_on_initial_bu
 
     assert result.cost_fractions[0].item() == pytest.approx(0.0005)
     assert result.cost_fractions[1].item() == pytest.approx(0.0, abs=1e-8)
+    assert result.foreign_turnover[0].item() == pytest.approx(0.5)
+    assert result.foreign_turnover[1].item() == pytest.approx(0.0, abs=1e-8)
     assert result.pretrade_weights[1, 1].item() == pytest.approx(drifted_usd)
     assert initial_buy.cost_fractions[0].item() == pytest.approx(0.00025)
 
@@ -112,6 +122,84 @@ def test_growth_factor_matches_manual_single_currency_calculation():
     expected_factor = (1 - 0.001) * 1.1
     assert result.net_growth_factors[0].item() == pytest.approx(expected_factor)
     assert result.loss.item() == pytest.approx(-np.log(expected_factor))
+
+
+def test_turnover_penalty_counts_initial_buy_and_foreign_currency_rotation():
+    targets = torch.zeros((3, 8), dtype=torch.float64)
+    targets[0, 0] = 0.5
+    targets[0, 1] = 0.5
+    targets[1, 0] = 0.5
+    targets[1, 3] = 0.5
+    targets[2, 0] = 0.5
+    targets[2, 1] = 0.5
+    returns = torch.zeros_like(targets)
+
+    result = differentiable_growth_loss(
+        targets,
+        returns,
+        fee_rate=0.001,
+        lambda_turnover=0.001,
+    )
+
+    assert result.foreign_turnover[0].item() == pytest.approx(0.5)
+    assert result.foreign_turnover[1].item() == pytest.approx(1.0)
+    assert result.foreign_turnover[2].item() == pytest.approx(1.0)
+
+
+def test_turnover_regularizer_is_differentiable_and_zero_lambda_preserves_existing_loss():
+    targets = torch.tensor(
+        [
+            [0.5, 0.5, 0, 0, 0, 0, 0, 0],
+            [0.5, 0, 0.5, 0, 0, 0, 0, 0],
+            [0.5, 0.5, 0, 0, 0, 0, 0, 0],
+        ],
+        dtype=torch.float64,
+        requires_grad=True,
+    )
+    returns = torch.zeros_like(targets)
+    ordinary = differentiable_growth_loss(targets, returns, fee_rate=0.001)
+    zero_lambda = differentiable_growth_loss(
+        targets,
+        returns,
+        fee_rate=0.001,
+        lambda_turnover=0.0,
+    )
+    regularized = differentiable_growth_loss(
+        targets,
+        returns,
+        fee_rate=0.001,
+        lambda_turnover=0.001,
+    )
+    assert torch.equal(ordinary.loss, zero_lambda.loss)
+    assert regularized.loss > ordinary.loss
+    assert (regularized.loss - ordinary.loss).item() == pytest.approx(
+        0.001 * regularized.foreign_turnover.mean().item()
+    )
+
+    regularized.loss.backward()
+
+    assert targets.grad is not None
+    assert torch.isfinite(targets.grad).all()
+    assert torch.count_nonzero(targets.grad) > 0
+
+
+def test_turnover_penalty_uses_drifted_pretrade_weights_not_previous_target():
+    target = np.zeros((2, 8), dtype=np.float64)
+    target[0, 0] = target[0, 1] = 0.5
+    usd_return = 0.20
+    target[1, 1] = 0.5 * (1 + usd_return) / (0.5 + 0.5 * (1 + usd_return))
+    target[1, 0] = 1.0 - target[1, 1]
+    returns = np.zeros_like(target)
+    returns[0, 1] = usd_return
+
+    result = differentiable_growth_loss(
+        torch.tensor(target, dtype=torch.float64),
+        torch.tensor(returns, dtype=torch.float64),
+        lambda_turnover=0.001,
+    )
+
+    assert result.foreign_turnover[0].item() == pytest.approx(0.5)
+    assert result.foreign_turnover[1].item() == pytest.approx(0.0, abs=1e-12)
 
 
 def test_exact_6a_fee_matches_differentiable_approximation_with_small_documented_gap():
@@ -314,3 +402,190 @@ def test_state_dict_checkpoint_reload_reproduces_predictions(tmp_path):
         actual = restored(inputs)
 
     torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+
+
+def _synthetic_loaded_fold(tmp_path) -> tuple[LoadedFold, MLPTrainingConfig]:
+    rng = np.random.default_rng(123)
+    feature_columns = tuple(f"feature_{index:02d}" for index in range(91))
+    target_columns = tuple(f"y_simple_return_{currency}" for currency in OUTPUT_CURRENCIES)
+    raw_train = pd.DataFrame(rng.normal(size=(20, 91)), columns=feature_columns)
+    scaler = FoldStandardizer.fit(raw_train)
+    train_features = scaler.transform(raw_train)
+    signals = pd.date_range("2000-01-07", periods=20, freq="7D")
+    raw_returns = rng.normal(scale=0.01, size=(20, 8))
+    raw_returns[:, 0] = 0.0
+    train_frame = pd.concat(
+        [
+            pd.DataFrame(
+                {
+                    "signal_date": signals,
+                    "execution_date": signals + pd.Timedelta(days=3),
+                    "next_execution_date": signals + pd.Timedelta(days=10),
+                }
+            ),
+            train_features.reset_index(drop=True),
+            pd.DataFrame(raw_returns, columns=target_columns),
+        ],
+        axis=1,
+    )
+    raw_validation = pd.DataFrame(rng.normal(size=(4, 91)), columns=feature_columns)
+    validation_features = scaler.transform(raw_validation)
+    validation_signals = pd.date_range(signals[-1] + pd.Timedelta(days=7), periods=4, freq="7D")
+    validation_returns = rng.normal(scale=0.01, size=(4, 8))
+    validation_returns[:, 0] = 0.0
+    validation_frame = pd.concat(
+        [
+            pd.DataFrame(
+                {
+                    "signal_date": validation_signals,
+                    "execution_date": validation_signals + pd.Timedelta(days=3),
+                    "next_execution_date": validation_signals + pd.Timedelta(days=10),
+                }
+            ),
+            validation_features.reset_index(drop=True),
+            pd.DataFrame(validation_returns, columns=target_columns),
+        ],
+        axis=1,
+    )
+    payload = {
+        **scaler.to_dict(),
+        "fit_scope": "training X rows only",
+        "purged_training_examples": 1,
+    }
+    fold = LoadedFold(
+        fold_number=1,
+        train_frame=train_frame,
+        validation_frame=validation_frame,
+        feature_columns=feature_columns,
+        target_columns=target_columns,
+        scaler=scaler,
+        scaler_payload=payload,
+        purged_training_examples=1,
+    )
+    config = MLPTrainingConfig(
+        layer_sizes=(91, 8, 16, 8),
+        optimizer="AdamW",
+        learning_rate=0.001,
+        weight_decay=0.01,
+        max_epochs=3,
+        early_stopping_patience=2,
+        random_seed=42,
+        device="cpu",
+        gradient_clip_norm=5.0,
+        initial_capital_eur=10_000.0,
+        transaction_cost_bps=10.0,
+        lambda_turnover=0.0,
+        drawdown_penalty=0.0,
+        drawdown_threshold=0.2,
+        dataset_dir=tmp_path,
+        eur_data_dir=tmp_path,
+        feature_data_dir=tmp_path,
+        models_dir=tmp_path / "models",
+        report_path=tmp_path / "audit.md",
+    )
+    return fold, config
+
+
+def test_inner_validation_is_chronological_purged_and_scaled_on_inner_train(tmp_path):
+    fold, _ = _synthetic_loaded_fold(tmp_path)
+
+    partition = _inner_validation_partition(fold)
+    raw_inner_train = (
+        fold.train_frame.loc[:, list(fold.feature_columns)].to_numpy()
+        * np.asarray(fold.scaler.scales)
+        + np.asarray(fold.scaler.means)
+    )
+    inner_start_index = len(fold.train_frame) - len(partition.validation_frame)
+    raw_inner_train_frame = pd.DataFrame(
+        raw_inner_train[: inner_start_index - partition.purged_training_examples],
+        columns=fold.feature_columns,
+    )
+
+    assert len(partition.validation_frame) == int(
+        np.ceil(len(fold.train_frame) * INNER_VALIDATION_FRACTION)
+    )
+    assert partition.train_frame["next_execution_date"].max().date() < partition.validation_start
+    assert (
+        partition.train_frame["signal_date"].max()
+        < partition.validation_frame["signal_date"].min()
+    )
+    assert partition.purged_training_examples >= 1
+    assert partition.scaler.means == pytest.approx(raw_inner_train_frame.mean(axis=0).to_numpy())
+    assert partition.outer_train_scaler == fold.scaler
+
+
+def test_outer_validation_changes_do_not_change_scalers_epochs_or_trained_weights(tmp_path):
+    fold, base_config = _synthetic_loaded_fold(tmp_path)
+    config = replace(base_config, lambda_turnover=0.001)
+
+    original = _train_fold(
+        fold,
+        config,
+        dataset_sha256="a" * 64,
+        source_hashes={"eur_sha256": "b" * 64, "feature_sha256": "c" * 64},
+    )
+    changed_validation = fold.validation_frame.copy()
+    changed_validation.loc[:, list(fold.feature_columns)] += 1_000_000.0
+    changed_validation.loc[:, list(fold.target_columns[1:])] = 0.25
+    changed_fold = LoadedFold(
+        fold_number=fold.fold_number,
+        train_frame=fold.train_frame.copy(),
+        validation_frame=changed_validation,
+        feature_columns=fold.feature_columns,
+        target_columns=fold.target_columns,
+        scaler=fold.scaler,
+        scaler_payload=fold.scaler_payload,
+        purged_training_examples=fold.purged_training_examples,
+    )
+    changed = _train_fold(
+        changed_fold,
+        config,
+        dataset_sha256="a" * 64,
+        source_hashes={"eur_sha256": "b" * 64, "feature_sha256": "c" * 64},
+    )
+
+    assert original["best_epoch"] == changed["best_epoch"]
+    assert original["inner_partition"].scaler == changed["inner_partition"].scaler
+    assert original["fold"].scaler == changed["fold"].scaler
+    assert all(
+        torch.equal(value, changed["model"].state_dict()[name])
+        for name, value in original["model"].state_dict().items()
+    )
+
+
+def test_outer_training_model_is_fresh_and_seed_reproducible(tmp_path):
+    fold, config = _synthetic_loaded_fold(tmp_path)
+    first = _fit_outer_model(fold, config, epochs=2, seed=42)
+    repeated = _fit_outer_model(fold, config, epochs=2, seed=42)
+    other_fold = _fit_outer_model(fold, config, epochs=2, seed=43)
+
+    assert all(
+        torch.equal(value, repeated.state_dict()[name])
+        for name, value in first.state_dict().items()
+    )
+    assert any(
+        not torch.equal(value, other_fold.state_dict()[name])
+        for name, value in first.state_dict().items()
+    )
+
+
+def test_synthetic_exact_accounting_comparison_reconciles_fees_and_no_shorts():
+    cases = _synthetic_accounting_cases(0.001)
+    by_name = {case["case"]: case for case in cases}
+
+    assert by_name["eur_cash"]["exact_net_return"] == pytest.approx(0.0)
+    assert by_name["eur_cash"]["exact_fees_eur"] == pytest.approx(0.0)
+    assert by_name["initial_investment_50pct_usd"]["exact_fees_eur"] == pytest.approx(5.0)
+    assert by_name["full_usd_to_jpy_rotation"]["exact_fees_eur"] == pytest.approx(
+        29.9500699101
+    )
+    assert by_name["full_usd_to_jpy_rotation"]["cash_before_second_rebalance_eur"] == pytest.approx(
+        0.0
+    )
+    assert all(case["nonnegative_cash"] for case in cases)
+    assert all(case["nonnegative_positions"] for case in cases)
+    assert all(
+        case["exact_fees_eur"] == pytest.approx(case["fee_from_notional_eur"])
+        for case in cases
+    )
+    assert max(abs(case["approximation_minus_exact_bps"]) for case in cases) < 1.0

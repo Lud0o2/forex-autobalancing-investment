@@ -5,7 +5,7 @@ import json
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -264,11 +264,26 @@ class FeatureParquetSnapshot:
     path: Path
 
 
-def read_feature_parquet(path: str | Path) -> FeatureParquetSnapshot:
-    """Read and verify feature Parquet metadata, content hash, missing flags, and chronology."""
+def read_feature_parquet(
+    path: str | Path,
+    *,
+    end_date: date | None = None,
+) -> FeatureParquetSnapshot:
+    """Read features through a cutoff, if requested.
+
+    A filtered read validates returned rows but cannot recompute the full-table
+    canonical digest without reading excluded rows. Callers using a cutoff must
+    validate the full source-file hash against trusted provenance separately.
+    """
     parquet_path = Path(path)
+    if end_date is not None and (isinstance(end_date, datetime) or not isinstance(end_date, date)):
+        raise FeatureStoreError("end_date must be a calendar date or None")
     try:
-        table = pq.read_table(parquet_path)
+        table = (
+            pq.read_table(parquet_path)
+            if end_date is None
+            else pq.read_table(parquet_path, filters=[("market_date", "<=", end_date)])
+        )
     except (OSError, pa.ArrowException) as error:
         raise FeatureStoreError(f"Could not read feature Parquet {parquet_path}: {error}") from error
     metadata = table.schema.metadata or {}
@@ -290,7 +305,10 @@ def read_feature_parquet(path: str | Path) -> FeatureParquetSnapshot:
         raise FeatureStoreError("Feature Parquet columns do not match their declared schema")
 
     records = tuple(table.to_pylist())
-    if not records or hashlib.sha256(_canonical_records(records, feature_names)).hexdigest() != expected_hash:
+    if not records or (
+        end_date is None
+        and hashlib.sha256(_canonical_records(records, feature_names)).hexdigest() != expected_hash
+    ):
         raise FeatureStoreError("Feature Parquet content hash does not match its metadata")
     validate_feature_records(records)
     if any(

@@ -6,7 +6,7 @@ import json
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -452,11 +452,26 @@ def write_eur_parquet(
     return snapshot
 
 
-def read_eur_parquet(path: str | Path) -> EurParquetSnapshot:
-    """Read a derived Parquet dataset and validate schema, digest, ordering, and values."""
+def read_eur_parquet(
+    path: str | Path,
+    *,
+    end_date: date | None = None,
+) -> EurParquetSnapshot:
+    """Read derived Parquet rows through a cutoff, if requested.
+
+    A filtered read validates returned rows but cannot recompute the full-table
+    canonical digest without reading excluded rows. Callers using a cutoff must
+    validate the full source-file hash against trusted provenance separately.
+    """
     parquet_path = Path(path)
+    if end_date is not None and (isinstance(end_date, datetime) or not isinstance(end_date, date)):
+        raise EurConversionError("end_date must be a calendar date or None")
     try:
-        table = pq.read_table(parquet_path)
+        table = (
+            pq.read_table(parquet_path)
+            if end_date is None
+            else pq.read_table(parquet_path, filters=[("market_date", "<=", end_date)])
+        )
     except (OSError, pa.ArrowException) as error:
         raise EurConversionError(
             f"Could not read derived Parquet {parquet_path}: {error}"
@@ -474,7 +489,10 @@ def read_eur_parquet(path: str | Path) -> EurParquetSnapshot:
         raise EurConversionError("Derived Parquet does not match the EUR-rate schema")
 
     rows = tuple(table.to_pylist())
-    if not rows or hashlib.sha256(_canonical_rows(rows)).hexdigest() != expected_digest:
+    if not rows or (
+        end_date is None
+        and hashlib.sha256(_canonical_rows(rows)).hexdigest() != expected_digest
+    ):
         raise EurConversionError("Derived Parquet content hash is invalid")
     last_date: date | None = None
     last_currency = ""

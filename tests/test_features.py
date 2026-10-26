@@ -321,6 +321,23 @@ def test_feature_parquet_round_trip_is_idempotent_and_validated(tmp_path):
     assert loaded.records[0]["market_date"] == records[0]["market_date"]
 
 
+def test_feature_parquet_date_filter_returns_no_future_rows(tmp_path):
+    snapshot = make_eur_snapshot(tmp_path, rows=250)
+    records = build_feature_records(
+        snapshot,
+        minimal_configuration(),
+        configuration_sha256="configuration-hash",
+    )
+    path = write_feature_parquet(tmp_path / "derived", records)
+    cutoff = records[100]["market_date"]
+
+    loaded = read_feature_parquet(path, end_date=cutoff)
+
+    assert loaded.records
+    assert max(row["market_date"] for row in loaded.records) <= cutoff
+    assert all(row["market_date"] <= cutoff for row in loaded.records)
+
+
 def test_feature_pipeline_reads_source_and_reports_warmup_summary(tmp_path):
     snapshot = make_eur_snapshot(tmp_path, rows=250)
     source_file = write_eur_parquet(tmp_path / "input", snapshot.rows)

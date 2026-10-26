@@ -223,6 +223,21 @@ def test_derived_parquet_is_idempotent_readable_and_provenance_preserving(tmp_pa
     )
 
 
+def test_eur_parquet_date_filter_returns_no_rows_after_cutoff(tmp_path):
+    _create_source_tree(tmp_path)
+    result = build_eur_conversion(
+        select_complete_snapshots(tmp_path / "processed", tmp_path / "raw")
+    )
+    written = write_eur_parquet(tmp_path / "derived", result.rows)
+    cutoff = result.rows[7]["market_date"]
+
+    filtered = read_eur_parquet(written.path, end_date=cutoff)
+
+    assert filtered.rows
+    assert max(row["market_date"] for row in filtered.rows) == cutoff
+    assert all(row["market_date"] <= cutoff for row in filtered.rows)
+
+
 def test_local_pipeline_generates_validation_report_and_chart(tmp_path):
     _create_source_tree(tmp_path)
 

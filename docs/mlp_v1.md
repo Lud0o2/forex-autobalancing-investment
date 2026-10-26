@@ -96,3 +96,11 @@ availability guarantee. Spread, slippage, interest, carry, and taxes are not
 modeled. The short initial development folds, differentiable fee approximation,
 and chosen objective can overfit; training loss improvement is not evidence of
 future profitability. The final 25% is reserved and was not evaluated.
+
+## Later turnover experiment (step 8D)
+
+The follow-up experiment in `docs/mlp_turnover.md` retains this model and
+objective while adding a fixed training-only regularizer based on the L1
+foreign-currency change from drifted pre-trade holdings. It does not change
+the exact 10 bps backtest fee. The 8B/8C artifacts remain the baseline and are
+not overwritten.

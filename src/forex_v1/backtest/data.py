@@ -3,7 +3,7 @@
 import hashlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -81,10 +81,14 @@ def _one_parquet(path: str | Path, label: str) -> Path:
     return source
 
 
-def _read_eur(path: str | Path) -> tuple[dict[date, dict[str, float]], str, str]:
+def _read_eur(
+    path: str | Path,
+    *,
+    end_date: date | None = None,
+) -> tuple[dict[date, dict[str, float]], str, str]:
     parquet_path = _one_parquet(path, "EUR")
     try:
-        snapshot = read_eur_parquet(parquet_path)
+        snapshot = read_eur_parquet(parquet_path, end_date=end_date)
     except (EurConversionError, OSError) as error:
         raise BacktestDataError(f"Cannot load validated EUR history: {error}") from error
     prices: dict[date, dict[str, float]] = {}
@@ -110,6 +114,7 @@ def _read_features(
     eur_file: str,
     eur_sha256: str,
     market_dates: Sequence[date],
+    end_date: date | None = None,
 ) -> tuple[
     dict[date, dict[str, float | None]],
     tuple[str, ...],
@@ -119,7 +124,7 @@ def _read_features(
 ]:
     parquet_path = _one_parquet(path, "feature")
     try:
-        snapshot = read_feature_parquet(parquet_path)
+        snapshot = read_feature_parquet(parquet_path, end_date=end_date)
     except (FeatureStoreError, OSError) as error:
         raise BacktestDataError(f"Cannot load validated features: {error}") from error
     actual_eur_hash = hashlib.sha256(eur_path.read_bytes()).hexdigest()
@@ -171,10 +176,14 @@ def _read_features(
 def load_market_data(
     eur_parquet_path: str | Path,
     feature_parquet_path: str | Path | None = None,
+    *,
+    end_date: date | None = None,
 ) -> MarketData:
-    """Read and cross-check an EUR Parquet and an optional feature Parquet."""
+    """Read aligned market data, optionally restricting returned market dates."""
+    if end_date is not None and (isinstance(end_date, datetime) or not isinstance(end_date, date)):
+        raise BacktestDataError("end_date must be a calendar date or None")
     eur_path = _one_parquet(eur_parquet_path, "EUR")
-    prices, eur_file, eur_sha256 = _read_eur(eur_path)
+    prices, eur_file, eur_sha256 = _read_eur(eur_path, end_date=end_date)
     features: dict[date, dict[str, float | None]] = {}
     feature_names: tuple[str, ...] = ()
     complete_feature_dates: frozenset[date] = frozenset()
@@ -193,6 +202,7 @@ def load_market_data(
             eur_file=eur_file,
             eur_sha256=eur_sha256,
             market_dates=tuple(prices),
+            end_date=end_date,
         )
     return MarketData(
         prices_by_date=prices,

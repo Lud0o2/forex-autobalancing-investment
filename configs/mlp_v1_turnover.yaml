@@ -1,0 +1,26 @@
+model:
+  layer_sizes: [91, 32, 16, 8]
+
+training:
+  optimizer: AdamW
+  learning_rate: 0.001
+  weight_decay: 0.01
+  max_epochs: 100
+  early_stopping_patience: 15
+  random_seed: 42
+  device: cpu
+  gradient_clip_norm: 5.0
+  lambda_turnover: 0.001
+
+finance:
+  initial_capital_eur: 10000
+  transaction_cost_bps: 10
+  drawdown_penalty: 0
+  drawdown_threshold: 0.2
+
+data:
+  dataset_dir: data/derived/ml
+  eur_data_dir: data/derived/eur_rates
+  feature_data_dir: data/derived/features
+  models_dir: data/derived/models/mlp_v1_turnover
+  report_path: reports/mlp_v1_turnover.md
